@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple_ml_models"
+version = "0.1.0"
+description = "Simple machine learning models for learning purposes"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    { name = "Pedro Jorge De Los Santos", email = "delossantosmfq@gmail.com" }
+]
+
+dependencies = [
+    # "numpy>=1.24",
+    # "pandas>=2.0"
+]
+
+[tool.setuptools]
+packages = ["simple_ml_models"]
