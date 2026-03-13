@@ -20,11 +20,12 @@ class KNNClassifier:
         - "distance" (future implementation)
     """
 
-    def __init__(self, n_neighbors=5, metric="euclidean", weights="uniform"):
+    def __init__(self, n_neighbors=5, metric="euclidean", weights="uniform", p=2):
         # Configuration parameters
         self.n_neighbors = n_neighbors
         self.metric = metric
         self.weights = weights
+        self.p = p  # For Minkowski distance (p=2 is Euclidean)
 
         # Attributes set during fitting
         self.X_train = None
@@ -91,171 +92,131 @@ class KNNClassifier:
         return self
 
 
-
     def predict(self, X):
-        """
-        Predict class labels for the input samples.
+        """Predict the class labels for the provided data.
 
         Parameters
         ----------
         X : array-like of shape (n_samples, n_features)
-            Input samples.
+            Test samples.
 
         Returns
-        -------
-        y_pred : ndarray of shape (n_samples,)
+        ------- 
+        y_pred : array of shape (n_samples,)
             Predicted class labels.
         """
         self._check_is_fitted()
-
         X = np.asarray(X)
 
         if X.ndim != 2:
-            raise ValueError("Input data must be a 2D array.")
+            raise ValueError("Input data must be 2D.")
 
         if X.shape[1] != self.n_features:
-            raise ValueError(
-                "Number of features in input does not match training data."
+            raise ValueError("Feature mismatch.")
+
+        # # ||X||^2
+        # X_sq = np.sum(X**2, axis=1, keepdims=True)
+
+        # # ||X_train||^2
+        # train_sq = np.sum(self.X_train**2, axis=1)
+
+        # # Cross term: X @ X_train^T
+        # cross = X @ self.X_train.T
+
+        # # Squared distances: ||X - X_train||^2 = ||X||^2 + ||X_train||^2 - 2 * (X @ X_train^T)
+        # distances = X_sq + train_sq - 2 * cross
+        # Compute pairwise distances
+        if self.metric == "euclidean":
+            X_sq = np.sum(X**2, axis=1, keepdims=True)
+            train_sq = np.sum(self.X_train**2, axis=1)
+            cross = X @ self.X_train.T
+            distances = X_sq + train_sq - 2 * cross
+            distances = np.maximum(distances, 0)
+
+        elif self.metric == "manhattan":
+            distances = np.sum(
+                np.abs(X[:, None, :] - self.X_train[None, :, :]),
+                axis=2
             )
 
-        n_samples_test = X.shape[0]
-        predictions = np.empty(n_samples_test, dtype=self.y_train.dtype)
-
-        for i in range(n_samples_test):
-            predictions[i] = self._predict_one(X[i])
-
-        return predictions
-
-
-    # ============================================================
-    # Internal Methods (Private)
-    # ============================================================
-
-    def _predict_one(self, x):
-        """
-        Predict the class label for a single sample.
-
-        Parameters
-        ----------
-        x : ndarray of shape (n_features,)
-
-        Returns
-        -------
-        label : int or str
-            Predicted class label.
-        """
-        self._check_is_fitted()
-
-        x = np.asarray(x)
-
-        if x.ndim != 1:
-            raise ValueError("Input sample must be a 1D array.")
-
-        # Step 1: Compute distances
-        distances = self._compute_distances(x)
-
-        # Step 2: Get k nearest neighbors
-        neighbor_indices = self._get_k_neighbors(distances)
-
-        # Step 3: Extract neighbor labels
-        neighbor_labels = self.y_train[neighbor_indices]
-
-        # Step 4: Extract neighbor distances (for future weighted voting)
-        neighbor_distances = distances[neighbor_indices]
-
-        # Step 5: Vote
-        prediction = self._vote(
-            neighbor_labels,
-            neighbor_distances=neighbor_distances
-        )
-
-        return prediction
-
-
-    def _compute_distances(self, x):
-        """
-        Compute distances between a single sample and all training samples.
-
-        Parameters
-        ----------
-        x : ndarray of shape (n_features,)
-
-        Returns
-        -------
-        distances : ndarray of shape (n_train,)
-        """
-        if self.metric != "euclidean":
-            raise ValueError("Currently only 'euclidean' metric is supported.")
-
-        if x.shape[0] != self.n_features:
-            raise ValueError(
-                "Input sample has incorrect number of features."
+        elif self.metric == "minkowski":
+            distances = np.sum(
+                np.abs(X[:, None, :] - self.X_train[None, :, :]) ** self.p,
+                axis=2
             )
-
-        distances = np.empty(self.n_samples)
-
-        for i in range(self.n_samples):
-            diff = x - self.X_train[i]
-            distances[i] = np.sqrt(np.sum(diff ** 2))
-
-        return distances
-
-
-
-    def _get_k_neighbors(self, distances):
-        """
-        Get indices of the k nearest neighbors.
-
-        Parameters
-        ----------
-        distances : ndarray of shape (n_train,)
-
-        Returns
-        -------
-        indices : ndarray of shape (k,)
-            Indices of the nearest neighbors.
-        """
-        if self.n_neighbors > len(distances):
-            raise ValueError(
-                "n_neighbors cannot be greater than number of training samples."
-            )
-
-        # Sort distances and return first k indices
-        sorted_indices = np.argsort(distances)
-        return sorted_indices[:self.n_neighbors]
-
-
-    def _vote(self, neighbor_labels, neighbor_distances=None):
-        """
-        Perform majority voting among neighbor labels.
-
-        Parameters
-        ----------
-        neighbor_labels : ndarray of shape (k,)
-        neighbor_distances : ndarray of shape (k,), optional
-            Distances corresponding to neighbor_labels. Used if weights="distance".
-
-        Returns
-        -------
-        label : int or str
-            Winning class label.
-        """
-        if self.weights == "uniform":
-            # Count occurrences of each class
-            classes, counts = np.unique(neighbor_labels, return_counts=True)
-
-            # Select class with highest count
-            # np.unique sorts classes, so tie-breaking is deterministic
-            winner = classes[np.argmax(counts)]
-
-            return winner
-
-        elif self.weights == "distance":
-            raise NotImplementedError("Distance weighting not implemented yet.")
 
         else:
-            raise ValueError("Invalid weights parameter.")
+            raise ValueError("Unsupported metric.")
 
+        # Get indices of the k nearest neighbors
+        k = self.n_neighbors
+        neighbor_indices = np.argpartition(distances, k-1, axis=1)[:, :k]
+
+        predictions = []
+
+        for i, neighbors in enumerate(neighbor_indices):
+
+            labels = self.y_train[neighbors]
+
+            if self.weights == "uniform":
+
+                classes, counts = np.unique(labels, return_counts=True)
+                prediction = classes[np.argmax(counts)]
+
+            elif self.weights == "distance":
+
+                neighbor_distances = distances[i, neighbors]
+                weights = 1 / (neighbor_distances + 1e-9)
+
+                class_scores = {}
+
+                for label, w in zip(labels, weights):
+                    class_scores[label] = class_scores.get(label, 0) + w
+
+                prediction = max(class_scores, key=class_scores.get)
+
+            else:
+                raise ValueError("Unsupported weights type.")
+
+            predictions.append(prediction)
+
+        return np.array(predictions)
+
+    def score(self, X, y):
+        """
+        Compute the mean accuracy on the given test data and labels.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Test samples.
+
+        y : array-like of shape (n_samples,)
+            True labels.
+
+        Returns
+        -------
+        score : float
+            Mean classification accuracy.
+        """
+
+        self._check_is_fitted()
+
+        X = np.asarray(X)
+        y = np.asarray(y)
+
+        if X.ndim != 2:
+            raise ValueError("Input data must be 2D.")
+
+        if y.ndim != 1:
+            raise ValueError("y must be 1D.")
+
+        if X.shape[0] != y.shape[0]:
+            raise ValueError("X and y must contain the same number of samples.")
+
+        y_pred = self.predict(X)
+
+        return np.mean(y_pred == y)
 
     # ============================================================
     # Utility Methods
